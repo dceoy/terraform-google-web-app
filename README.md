@@ -5,13 +5,13 @@ Terraform modules of serverless web applications on Google Cloud
 
 | Module | Description |
 | --- | --- |
-| [`modules/cloud_run`](modules/cloud_run) | Cloud Run (v2) service with a dedicated service account, API enablement, and IAM invoker bindings |
+| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, and IAM invoker bindings |
 
 ## Usage
 
 ```hcl
-module "cloud_run" {
-  source = "./modules/cloud_run"
+module "cloudrun" {
+  source = "./modules/cloudrun"
 
   system_name = "myapp"
   env_type    = "dev"
