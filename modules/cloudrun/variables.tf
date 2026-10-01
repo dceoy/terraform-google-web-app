@@ -59,30 +59,6 @@ variable "artifact_registry_repository_id" {
   default     = null
 }
 
-variable "deploy_on_image_push" {
-  description = "Whether to deploy a new Cloud Run revision when the configured Artifact Registry tag is pushed"
-  type        = bool
-  default     = false
-}
-
-variable "deploy_image_name" {
-  description = "Artifact Registry image name monitored for automatic Cloud Run deployment"
-  type        = string
-  default     = "app"
-}
-
-variable "deploy_image_tag" {
-  description = "Artifact Registry tag monitored for automatic Cloud Run deployment"
-  type        = string
-  default     = "prod"
-}
-
-variable "artifact_registry_notification_topic" {
-  description = "Existing Artifact Registry notification topic resource name; when null and deploy_on_image_push is enabled, the module creates projects/<project>/topics/gcr"
-  type        = string
-  default     = null
-}
-
 variable "container_name" {
   description = "Container name"
   type        = string
