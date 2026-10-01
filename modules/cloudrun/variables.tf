@@ -207,7 +207,7 @@ variable "service_account_email" {
 }
 
 variable "service_account_project_roles" {
-  description = "Project-level IAM roles granted to the Cloud Run service account"
+  description = "Project-level IAM roles granted to the Cloud Run service account (created or existing)"
   type        = list(string)
   default     = []
 }

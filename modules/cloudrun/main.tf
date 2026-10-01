@@ -18,8 +18,8 @@ resource "google_service_account" "main" {
 resource "google_project_iam_member" "main" {
   # checkov:skip=CKV_GCP_41:Project role bindings are explicitly controlled via input variables.
   # checkov:skip=CKV_GCP_49:Project role bindings are explicitly controlled via input variables.
-  for_each = toset(var.create_service_account ? var.service_account_project_roles : [])
-  member   = google_service_account.main[0].member
+  for_each = toset(var.service_account_project_roles)
+  member   = "serviceAccount:${local.service_account_email}"
   role     = each.value
   project  = local.project_id
 }
