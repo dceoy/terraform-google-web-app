@@ -42,7 +42,7 @@ variable "project_service_disable_dependent_services" {
 }
 
 variable "image" {
-  description = "Container image URL for the Cloud Run service"
+  description = "Bootstrap container image URL for the Cloud Run service; subsequent image deployment is expected to be managed externally by CI/CD"
   type        = string
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }

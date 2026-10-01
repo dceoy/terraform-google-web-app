@@ -8,7 +8,7 @@ Terraform modules of serverless web applications on Google Cloud.
 
 | Module | Description |
 | --- | --- |
-| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, optional Artifact Registry, optional IAP, and IAM invoker bindings |
+| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, optional Artifact Registry, CI-managed image deployment, optional IAP, and IAM invoker bindings |
 
 ## Installation
 
@@ -90,8 +90,8 @@ Terraform modules of serverless web applications on Google Cloud.
     create_artifact_registry_repository = true
     artifact_registry_repository_id     = "myapp"
 
-    # Keep the default public hello image for the first apply if the application
-    # image has not been pushed yet. Set this after pushing an image.
+    # The image is used to bootstrap the Cloud Run service. Subsequent image
+    # deployments are expected to be handled by CI/CD such as GitHub Actions.
     # image = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:<tag>"
 
     # Optional: plain and Secret Manager environment variables
@@ -181,28 +181,37 @@ Terraform modules of serverless web applications on Google Cloud.
         "projects/${PROJECT_ID}/locations/${LOCATION}/deployments/${DEPLOYMENT_ID}"
     ```
 
-9.  To deploy a locally built Docker image, tag and push it to Artifact Registry,
-    set `image` to the pushed image URI, and apply the deployment again.
+9.  Deploy application images from CI/CD. Terraform manages the Cloud Run service
+    configuration, while the container image is intentionally deployment-owned.
+    The module ignores external changes to the container image so a later
+    Terraform apply does not roll back an image deployed by GitHub Actions.
 
-    ```sh
-    $ REPOSITORY_ID='myapp'
-    $ IMAGE_NAME='app'
-    $ IMAGE_TAG="$(git rev-parse --short HEAD)"
-    $ IMAGE_URL="${LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
-    $ gcloud auth configure-docker "${LOCATION}-docker.pkg.dev"
-    $ docker build --tag "${IMAGE_URL}" .
-    $ docker push "${IMAGE_URL}"
+    A GitHub Actions job can build, push, and immediately deploy the same
+    immutable image:
+
+    ```yaml
+    - name: Build and push image
+      run: |
+        IMAGE_URL="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_ID}/app:${GITHUB_SHA}"
+        gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+        docker build --tag "${IMAGE_URL}" .
+        docker push "${IMAGE_URL}"
+        echo "IMAGE_URL=${IMAGE_URL}" >> "${GITHUB_ENV}"
+
+    - name: Deploy Cloud Run
+      run: |
+        gcloud run deploy "${SERVICE_NAME}" \
+          --image="${IMAGE_URL}" \
+          --region="${REGION}" \
+          --project="${PROJECT_ID}" \
+          --quiet
     ```
 
-    Then set:
-
-    ```hcl
-    image = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:<tag>"
-    ```
-
-    Prefer an immutable tag such as a Git commit SHA, or an image digest, instead
-    of reusing `latest`. Changing the `image` value gives Terraform an explicit
-    revision change to deploy.
+    Authenticate the workflow to Google Cloud before these steps, preferably
+    with Workload Identity Federation. The workflow identity needs permission to
+    push to the Artifact Registry repository, update the Cloud Run service, and
+    act as the Cloud Run runtime service account. Keeping the image tag tied to
+    `GITHUB_SHA` makes each deployed artifact immutable and traceable.
 
 ## Usage as a Terraform module
 
@@ -218,14 +227,17 @@ module "cloudrun" {
   create_artifact_registry_repository = true
   artifact_registry_repository_id     = "myapp"
 
-  image       = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:abc1234"
+  # Bootstrap image only; CI/CD owns subsequent image deployments.
+  image       = "us-docker.pkg.dev/cloudrun/container/hello"
   iap_enabled = true
 }
 ```
 
-The module outputs `artifact_registry_repository_url` when it creates the
-repository. This value can be used by external build/deployment automation such
-as GitHub Actions.
+The module outputs `artifact_registry_repository_url` and
+`cloud_run_service_name`, which can be passed to GitHub Actions for build,
+push, and deployment automation. Container image updates made by CI/CD are
+excluded from Terraform drift reconciliation; other Cloud Run configuration
+remains Terraform-managed.
 
 ## Cleanup
 
