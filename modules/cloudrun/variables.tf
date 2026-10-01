@@ -47,6 +47,18 @@ variable "image" {
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
 
+variable "create_artifact_registry_repository" {
+  description = "Whether to create an Artifact Registry Docker repository for application images"
+  type        = bool
+  default     = false
+}
+
+variable "artifact_registry_repository_id" {
+  description = "Artifact Registry repository ID; defaults to <system_name>-<env_type> when repository creation is enabled"
+  type        = string
+  default     = null
+}
+
 variable "container_name" {
   description = "Container name"
   type        = string
