@@ -28,21 +28,6 @@ resource "google_project_service_identity" "iap" {
   service    = "iap.googleapis.com"
 }
 
-resource "google_project_service_identity" "cloudbuild" {
-  count      = var.deploy_on_image_push ? 1 : 0
-  provider   = google-beta
-  depends_on = [google_project_service.apis]
-  project    = local.project_id
-  service    = "cloudbuild.googleapis.com"
-}
-
-resource "google_pubsub_topic" "artifact_registry" {
-  count      = var.deploy_on_image_push && var.artifact_registry_notification_topic == null ? 1 : 0
-  depends_on = [google_project_service.apis]
-  project    = local.project_id
-  name       = "gcr"
-}
-
 resource "google_service_account" "main" {
   count        = var.create_service_account ? 1 : 0
   depends_on   = [google_project_service.apis]
@@ -50,25 +35,6 @@ resource "google_service_account" "main" {
   display_name = "${var.system_name}-${var.env_type}-run-sa"
   description  = "Service account for the Cloud Run service"
   project      = local.project_id
-}
-
-resource "google_service_account" "image_deployer" {
-  count        = var.deploy_on_image_push ? 1 : 0
-  depends_on   = [google_project_service.apis]
-  account_id   = substr("${var.system_name}-${var.env_type}-deploy", 0, 30)
-  display_name = "${var.system_name}-${var.env_type}-image-deployer"
-  description  = "Service account for Artifact Registry image push deployments"
-  project      = local.project_id
-}
-
-resource "google_project_iam_member" "image_deployer_cloudbuild" {
-  for_each = var.deploy_on_image_push ? toset([
-    "roles/cloudbuild.builds.builder",
-    "roles/serviceusage.serviceUsageConsumer",
-  ]) : toset([])
-  project = local.project_id
-  member  = "serviceAccount:${google_service_account.image_deployer[0].email}"
-  role    = each.value
 }
 
 resource "google_project_iam_member" "main" {
@@ -196,84 +162,4 @@ resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
   name     = google_cloud_run_v2_service.main.name
   member   = google_project_service_identity.iap[0].member
   role     = "roles/run.invoker"
-}
-
-resource "google_cloud_run_v2_service_iam_member" "image_deployer" {
-  count    = var.deploy_on_image_push ? 1 : 0
-  project  = google_cloud_run_v2_service.main.project
-  location = google_cloud_run_v2_service.main.location
-  name     = google_cloud_run_v2_service.main.name
-  member   = "serviceAccount:${google_service_account.image_deployer[0].email}"
-  role     = "roles/run.developer"
-}
-
-resource "google_service_account_iam_member" "image_deployer" {
-  count              = var.deploy_on_image_push ? 1 : 0
-  service_account_id = var.create_service_account ? google_service_account.main[0].name : "projects/${local.project_id}/serviceAccounts/${local.service_account_email}"
-  member             = "serviceAccount:${google_service_account.image_deployer[0].email}"
-  role               = "roles/iam.serviceAccountUser"
-}
-
-resource "google_artifact_registry_repository_iam_member" "image_deployer" {
-  count      = var.deploy_on_image_push ? 1 : 0
-  depends_on = [google_artifact_registry_repository.main]
-  project    = local.project_id
-  location   = local.region
-  repository = local.artifact_registry_repository_id
-  member     = "serviceAccount:${google_service_account.image_deployer[0].email}"
-  role       = "roles/artifactregistry.reader"
-}
-
-resource "google_cloudbuild_trigger" "image_push" {
-  count = var.deploy_on_image_push ? 1 : 0
-  depends_on = [
-    google_project_service_identity.cloudbuild,
-    google_project_iam_member.image_deployer_cloudbuild,
-    google_cloud_run_v2_service_iam_member.image_deployer,
-    google_service_account_iam_member.image_deployer,
-    google_artifact_registry_repository_iam_member.image_deployer,
-  ]
-  project         = local.project_id
-  location        = local.region
-  name            = substr("${local.service_name}-image-push", 0, 64)
-  description     = "Deploy ${local.deploy_image_uri} to ${local.service_name} when the tag is pushed"
-  service_account = google_service_account.image_deployer[0].name
-
-  pubsub_config {
-    topic = var.artifact_registry_notification_topic != null ? var.artifact_registry_notification_topic : google_pubsub_topic.artifact_registry[0].id
-  }
-
-  substitutions = {
-    _ACTION = "$(body.message.data.action)"
-    _TAG    = "$(body.message.data.tag)"
-  }
-
-  filter = "_ACTION == \"INSERT\" && _TAG == \"${local.deploy_image_uri}\""
-
-  build {
-    step {
-      name       = "gcr.io/google.com/cloudsdktool/google-cloud-cli:stable"
-      entrypoint = "gcloud"
-      args = [
-        "run",
-        "deploy",
-        local.service_name,
-        "--image=${local.deploy_image_uri}",
-        "--region=${local.region}",
-        "--project=${local.project_id}",
-        "--quiet",
-      ]
-    }
-
-    options {
-      logging = "CLOUD_LOGGING_ONLY"
-    }
-  }
-
-  lifecycle {
-    precondition {
-      condition     = var.image == local.deploy_image_uri
-      error_message = "image must equal the monitored Artifact Registry tag URI when deploy_on_image_push is true."
-    }
-  }
 }
