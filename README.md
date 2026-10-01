@@ -8,7 +8,7 @@ Terraform modules of serverless web applications on Google Cloud.
 
 | Module | Description |
 | --- | --- |
-| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, optional Artifact Registry, image-push deployment, optional IAP, and IAM invoker bindings |
+| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, optional Artifact Registry, CI-managed image deployment, optional IAP, and IAM invoker bindings |
 
 ## Installation
 
@@ -78,17 +78,6 @@ Terraform modules of serverless web applications on Google Cloud.
         --role='roles/artifactregistry.admin'
     ```
 
-    If automatic deployment on image push is enabled, also grant:
-
-    ```sh
-    $ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-        --member="serviceAccount:${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com" \
-        --role='roles/cloudbuild.builds.editor'
-    $ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-        --member="serviceAccount:${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com" \
-        --role='roles/pubsub.editor'
-    ```
-
 6.  Create `envs/dev/terraform.tfvars` and set the variables as follows:
 
     ```hcl
@@ -101,17 +90,9 @@ Terraform modules of serverless web applications on Google Cloud.
     create_artifact_registry_repository = true
     artifact_registry_repository_id     = "myapp"
 
-    # Keep the default public hello image for the first apply if the application
-    # image has not been pushed yet. Set this after pushing an image.
+    # The image is used to bootstrap the Cloud Run service. Subsequent image
+    # deployments are expected to be handled by CI/CD such as GitHub Actions.
     # image = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:<tag>"
-
-    # Optional: deploy a new Cloud Run revision whenever the prod tag is pushed.
-    # Enable this after the initial tagged image exists. The image value must
-    # point to the same mutable tag so Terraform and Cloud Build agree on it.
-    # deploy_on_image_push = true
-    # deploy_image_name    = "app"
-    # deploy_image_tag     = "prod"
-    # image                = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:prod"
 
     # Optional: plain and Secret Manager environment variables
     env_vars = {
@@ -144,25 +125,6 @@ Terraform modules of serverless web applications on Google Cloud.
     `artifactregistry.googleapis.com` and creates a Docker repository in the
     Cloud Run region. Docker build and push are intentionally kept outside
     Terraform.
-
-    When `deploy_on_image_push = true`, the module enables Cloud Build and
-    Pub/Sub, creates a dedicated least-privilege deployment service account, and
-    creates a Cloud Build Pub/Sub trigger for Artifact Registry notifications.
-    By default it creates the project topic `gcr`, which Artifact Registry uses
-    for repository change notifications. If that topic already exists outside
-    this module, set `artifact_registry_notification_topic` to its full resource
-    name instead.
-
-    The trigger accepts only `INSERT` notifications whose tag exactly matches
-    `<region>-docker.pkg.dev/<project>/<repository>/<deploy_image_name>:<deploy_image_tag>`.
-    It runs `gcloud run deploy` with that same tag. Cloud Run resolves the tag
-    to an immutable digest for each revision, while the configured service image
-    remains the shared tag URI. To avoid Terraform reverting an automatic
-    deployment, `image` must equal that monitored tag URI while this feature is
-    enabled.
-
-    Cloud Build Pub/Sub triggers are not supported inside a VPC Service Controls
-    perimeter.
 
     When `iap_enabled = true`, the module enables `iap.googleapis.com`,
     explicitly provisions the Google-managed IAP service identity, and grants it
@@ -219,55 +181,37 @@ Terraform modules of serverless web applications on Google Cloud.
         "projects/${PROJECT_ID}/locations/${LOCATION}/deployments/${DEPLOYMENT_ID}"
     ```
 
-9.  To deploy a locally built Docker image manually, tag and push it to Artifact
-    Registry, set `image` to the pushed image URI, and apply the deployment
-    again.
+9.  Deploy application images from CI/CD. Terraform manages the Cloud Run service
+    configuration, while the container image is intentionally deployment-owned.
+    The module ignores external changes to the container image so a later
+    Terraform apply does not roll back an image deployed by GitHub Actions.
 
-    ```sh
-    $ REPOSITORY_ID='myapp'
-    $ IMAGE_NAME='app'
-    $ IMAGE_TAG="$(git rev-parse --short HEAD)"
-    $ IMAGE_URL="${LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
-    $ gcloud auth configure-docker "${LOCATION}-docker.pkg.dev"
-    $ docker build --tag "${IMAGE_URL}" .
-    $ docker push "${IMAGE_URL}"
+    A GitHub Actions job can build, push, and immediately deploy the same
+    immutable image:
+
+    ```yaml
+    - name: Build and push image
+      run: |
+        IMAGE_URL="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_ID}/app:${GITHUB_SHA}"
+        gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+        docker build --tag "${IMAGE_URL}" .
+        docker push "${IMAGE_URL}"
+        echo "IMAGE_URL=${IMAGE_URL}" >> "${GITHUB_ENV}"
+
+    - name: Deploy Cloud Run
+      run: |
+        gcloud run deploy "${SERVICE_NAME}" \
+          --image="${IMAGE_URL}" \
+          --region="${REGION}" \
+          --project="${PROJECT_ID}" \
+          --quiet
     ```
 
-    Then set:
-
-    ```hcl
-    image = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:<tag>"
-    ```
-
-    Prefer an immutable tag such as a Git commit SHA, or an image digest, instead
-    of reusing `latest`. Changing the `image` value gives Terraform an explicit
-    revision change to deploy.
-
-
-    For automatic deployment, first make sure the monitored tag exists, then
-    enable `deploy_on_image_push` and point `image` at the same tag:
-
-    ```hcl
-    deploy_on_image_push = true
-    deploy_image_name    = "app"
-    deploy_image_tag     = "prod"
-    image                = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:prod"
-    ```
-
-    After that, publishing the `prod` tag is enough to create a new Cloud Run
-    revision:
-
-    ```sh
-    $ IMAGE_SHA="${LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_ID}/${IMAGE_NAME}:$(git rev-parse --short HEAD)"
-    $ IMAGE_PROD="${LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_ID}/${IMAGE_NAME}:prod"
-    $ docker build --tag "${IMAGE_SHA}" .
-    $ docker push "${IMAGE_SHA}"
-    $ docker tag "${IMAGE_SHA}" "${IMAGE_PROD}"
-    $ docker push "${IMAGE_PROD}"
-    ```
-
-    The SHA tag remains immutable for traceability; moving only the `prod` tag
-    controls deployment.
+    Authenticate the workflow to Google Cloud before these steps, preferably
+    with Workload Identity Federation. The workflow identity needs permission to
+    push to the Artifact Registry repository, update the Cloud Run service, and
+    act as the Cloud Run runtime service account. Keeping the image tag tied to
+    `GITHUB_SHA` makes each deployed artifact immutable and traceable.
 
 ## Usage as a Terraform module
 
@@ -283,19 +227,17 @@ module "cloudrun" {
   create_artifact_registry_repository = true
   artifact_registry_repository_id     = "myapp"
 
-  deploy_on_image_push = true
-  deploy_image_name    = "app"
-  deploy_image_tag     = "prod"
-  image                = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:prod"
-
+  # Bootstrap image only; CI/CD owns subsequent image deployments.
+  image       = "us-docker.pkg.dev/cloudrun/container/hello"
   iap_enabled = true
 }
 ```
 
-The module outputs `artifact_registry_repository_url` when it creates the
-repository. When image-push deployment is enabled it also outputs
-`deploy_image_uri`, `image_push_trigger_id`, the deployment service account,
-and the Artifact Registry notification topic.
+The module outputs `artifact_registry_repository_url` and
+`cloud_run_service_name`, which can be passed to GitHub Actions for build,
+push, and deployment automation. Container image updates made by CI/CD are
+excluded from Terraform drift reconciliation; other Cloud Run configuration
+remains Terraform-managed.
 
 ## Cleanup
 
