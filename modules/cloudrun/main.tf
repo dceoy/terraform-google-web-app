@@ -134,6 +134,11 @@ resource "google_cloud_run_v2_service" "main" {
   }
 
   lifecycle {
+    ignore_changes = [
+      client,
+      client_version,
+      template[0].containers[0].image,
+    ]
     precondition {
       condition     = var.create_service_account || var.service_account_email != null
       error_message = "service_account_email is required when create_service_account is false."
