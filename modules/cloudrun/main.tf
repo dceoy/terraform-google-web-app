@@ -6,6 +6,28 @@ resource "google_project_service" "apis" {
   disable_dependent_services = var.project_service_disable_dependent_services
 }
 
+resource "google_artifact_registry_repository" "main" {
+  count         = var.create_artifact_registry_repository ? 1 : 0
+  depends_on    = [google_project_service.apis]
+  project       = local.project_id
+  location      = local.region
+  repository_id = local.artifact_registry_repository_id
+  description   = "Docker repository for ${var.system_name}-${var.env_type}"
+  format        = "DOCKER"
+  labels = {
+    system-name = var.system_name
+    env-type    = var.env_type
+  }
+}
+
+resource "google_project_service_identity" "iap" {
+  count      = var.iap_enabled ? 1 : 0
+  provider   = google-beta
+  depends_on = [google_project_service.apis]
+  project    = local.project_id
+  service    = "iap.googleapis.com"
+}
+
 resource "google_service_account" "main" {
   count        = var.create_service_account ? 1 : 0
   depends_on   = [google_project_service.apis]
@@ -25,7 +47,7 @@ resource "google_project_iam_member" "main" {
 }
 
 resource "google_cloud_run_v2_service" "main" {
-  depends_on          = [google_project_service.apis, google_project_iam_member.main]
+  depends_on          = [google_project_service.apis, google_project_iam_member.main, google_project_service_identity.iap]
   name                = local.service_name
   location            = local.region
   project             = local.project_id
@@ -138,6 +160,6 @@ resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
   project  = google_cloud_run_v2_service.main.project
   location = google_cloud_run_v2_service.main.location
   name     = google_cloud_run_v2_service.main.name
-  member   = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
+  member   = google_project_service_identity.iap[0].member
   role     = "roles/run.invoker"
 }
