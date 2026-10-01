@@ -144,6 +144,9 @@ module "cloudrun" {
 }
 ```
 
+The module does not configure the `google` provider. Configure `provider "google"`
+in the root module, or pass an aliased provider with `providers = { google = google.alias }`.
+
 ## Cleanup
 
 Set `deletion_protection = false` in the tfvars and apply it before deleting the
