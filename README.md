@@ -8,7 +8,7 @@ Terraform modules of serverless web applications on Google Cloud.
 
 | Module | Description |
 | --- | --- |
-| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, optional Artifact Registry, optional IAP, and IAM invoker bindings |
+| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, optional Artifact Registry, image-push deployment, optional IAP, and IAM invoker bindings |
 
 ## Installation
 
@@ -78,6 +78,17 @@ Terraform modules of serverless web applications on Google Cloud.
         --role='roles/artifactregistry.admin'
     ```
 
+    If automatic deployment on image push is enabled, also grant:
+
+    ```sh
+    $ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+        --member="serviceAccount:${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --role='roles/cloudbuild.builds.editor'
+    $ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+        --member="serviceAccount:${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --role='roles/pubsub.editor'
+    ```
+
 6.  Create `envs/dev/terraform.tfvars` and set the variables as follows:
 
     ```hcl
@@ -93,6 +104,14 @@ Terraform modules of serverless web applications on Google Cloud.
     # Keep the default public hello image for the first apply if the application
     # image has not been pushed yet. Set this after pushing an image.
     # image = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:<tag>"
+
+    # Optional: deploy a new Cloud Run revision whenever the prod tag is pushed.
+    # Enable this after the initial tagged image exists. The image value must
+    # point to the same mutable tag so Terraform and Cloud Build agree on it.
+    # deploy_on_image_push = true
+    # deploy_image_name    = "app"
+    # deploy_image_tag     = "prod"
+    # image                = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:prod"
 
     # Optional: plain and Secret Manager environment variables
     env_vars = {
@@ -125,6 +144,25 @@ Terraform modules of serverless web applications on Google Cloud.
     `artifactregistry.googleapis.com` and creates a Docker repository in the
     Cloud Run region. Docker build and push are intentionally kept outside
     Terraform.
+
+    When `deploy_on_image_push = true`, the module enables Cloud Build and
+    Pub/Sub, creates a dedicated least-privilege deployment service account, and
+    creates a Cloud Build Pub/Sub trigger for Artifact Registry notifications.
+    By default it creates the project topic `gcr`, which Artifact Registry uses
+    for repository change notifications. If that topic already exists outside
+    this module, set `artifact_registry_notification_topic` to its full resource
+    name instead.
+
+    The trigger accepts only `INSERT` notifications whose tag exactly matches
+    `<region>-docker.pkg.dev/<project>/<repository>/<deploy_image_name>:<deploy_image_tag>`.
+    It runs `gcloud run deploy` with that same tag. Cloud Run resolves the tag
+    to an immutable digest for each revision, while the configured service image
+    remains the shared tag URI. To avoid Terraform reverting an automatic
+    deployment, `image` must equal that monitored tag URI while this feature is
+    enabled.
+
+    Cloud Build Pub/Sub triggers are not supported inside a VPC Service Controls
+    perimeter.
 
     When `iap_enabled = true`, the module enables `iap.googleapis.com`,
     explicitly provisions the Google-managed IAP service identity, and grants it
@@ -181,8 +219,9 @@ Terraform modules of serverless web applications on Google Cloud.
         "projects/${PROJECT_ID}/locations/${LOCATION}/deployments/${DEPLOYMENT_ID}"
     ```
 
-9.  To deploy a locally built Docker image, tag and push it to Artifact Registry,
-    set `image` to the pushed image URI, and apply the deployment again.
+9.  To deploy a locally built Docker image manually, tag and push it to Artifact
+    Registry, set `image` to the pushed image URI, and apply the deployment
+    again.
 
     ```sh
     $ REPOSITORY_ID='myapp'
@@ -204,6 +243,32 @@ Terraform modules of serverless web applications on Google Cloud.
     of reusing `latest`. Changing the `image` value gives Terraform an explicit
     revision change to deploy.
 
+
+    For automatic deployment, first make sure the monitored tag exists, then
+    enable `deploy_on_image_push` and point `image` at the same tag:
+
+    ```hcl
+    deploy_on_image_push = true
+    deploy_image_name    = "app"
+    deploy_image_tag     = "prod"
+    image                = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:prod"
+    ```
+
+    After that, publishing the `prod` tag is enough to create a new Cloud Run
+    revision:
+
+    ```sh
+    $ IMAGE_SHA="${LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_ID}/${IMAGE_NAME}:$(git rev-parse --short HEAD)"
+    $ IMAGE_PROD="${LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_ID}/${IMAGE_NAME}:prod"
+    $ docker build --tag "${IMAGE_SHA}" .
+    $ docker push "${IMAGE_SHA}"
+    $ docker tag "${IMAGE_SHA}" "${IMAGE_PROD}"
+    $ docker push "${IMAGE_PROD}"
+    ```
+
+    The SHA tag remains immutable for traceability; moving only the `prod` tag
+    controls deployment.
+
 ## Usage as a Terraform module
 
 ```hcl
@@ -218,14 +283,19 @@ module "cloudrun" {
   create_artifact_registry_repository = true
   artifact_registry_repository_id     = "myapp"
 
-  image       = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:abc1234"
+  deploy_on_image_push = true
+  deploy_image_name    = "app"
+  deploy_image_tag     = "prod"
+  image                = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:prod"
+
   iap_enabled = true
 }
 ```
 
 The module outputs `artifact_registry_repository_url` when it creates the
-repository. This value can be used by external build/deployment automation such
-as GitHub Actions.
+repository. When image-push deployment is enabled it also outputs
+`deploy_image_uri`, `image_push_trigger_id`, the deployment service account,
+and the Artifact Registry notification topic.
 
 ## Cleanup
 
