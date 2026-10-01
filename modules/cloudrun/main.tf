@@ -62,10 +62,13 @@ resource "google_service_account" "image_deployer" {
 }
 
 resource "google_project_iam_member" "image_deployer_cloudbuild" {
-  count   = var.deploy_on_image_push ? 1 : 0
+  for_each = var.deploy_on_image_push ? toset([
+    "roles/cloudbuild.builds.builder",
+    "roles/serviceusage.serviceUsageConsumer",
+  ]) : toset([])
   project = local.project_id
   member  = "serviceAccount:${google_service_account.image_deployer[0].email}"
-  role    = "roles/cloudbuild.builds.builder"
+  role    = each.value
 }
 
 resource "google_project_iam_member" "main" {
