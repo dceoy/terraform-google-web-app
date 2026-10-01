@@ -1,5 +1,5 @@
 resource "google_project_service" "apis" {
-  for_each                   = toset(var.enabled_apis)
+  for_each                   = local.enabled_apis
   service                    = each.key
   project                    = local.project_id
   disable_on_destroy         = var.project_service_disable_on_destroy
@@ -33,6 +33,7 @@ resource "google_cloud_run_v2_service" "main" {
   ingress             = var.ingress
   launch_stage        = var.launch_stage
   deletion_protection = var.deletion_protection
+  iap_enabled         = var.iap_enabled
   labels = {
     name        = local.service_name
     system-name = var.system_name
@@ -129,5 +130,14 @@ resource "google_cloud_run_v2_service_iam_member" "invoker" {
   location = google_cloud_run_v2_service.main.location
   name     = google_cloud_run_v2_service.main.name
   member   = each.value
+  role     = "roles/run.invoker"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
+  count    = var.iap_enabled ? 1 : 0
+  project  = google_cloud_run_v2_service.main.project
+  location = google_cloud_run_v2_service.main.location
+  name     = google_cloud_run_v2_service.main.name
+  member   = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
   role     = "roles/run.invoker"
 }
