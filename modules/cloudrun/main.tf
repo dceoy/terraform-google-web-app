@@ -195,7 +195,6 @@ resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
   role     = "roles/run.invoker"
 }
 
-
 resource "google_cloud_run_v2_service_iam_member" "image_deployer" {
   count    = var.deploy_on_image_push ? 1 : 0
   project  = google_cloud_run_v2_service.main.project
@@ -223,8 +222,8 @@ resource "google_artifact_registry_repository_iam_member" "image_deployer" {
 }
 
 resource "google_cloudbuild_trigger" "image_push" {
-  count           = var.deploy_on_image_push ? 1 : 0
-  depends_on      = [
+  count = var.deploy_on_image_push ? 1 : 0
+  depends_on = [
     google_project_service_identity.cloudbuild,
     google_project_iam_member.image_deployer_cloudbuild,
     google_cloud_run_v2_service_iam_member.image_deployer,
