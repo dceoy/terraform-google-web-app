@@ -130,7 +130,15 @@ Terraform modules of serverless web applications on Google Cloud.
     explicitly provisions the Google-managed IAP service identity, and grants it
     `roles/run.invoker`. It does not manage
     `roles/iap.httpsResourceAccessor` memberships, so IAP users and groups can
-    be changed independently of Terraform. For example:
+    be changed independently of Terraform.
+
+    If IAP is being enabled for the first time in a project that does not belong
+    to a Google Cloud organization, Terraform cannot create the required OAuth
+    client automatically. Enable IAP once in the Google Cloud Console or
+    configure a custom OAuth client before relying on this Terraform-managed
+    setup.
+
+    For example:
 
     ```sh
     $ SERVICE_NAME='myapp-dev-cloud-run'
