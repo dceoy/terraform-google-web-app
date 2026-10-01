@@ -212,6 +212,12 @@ variable "service_account_project_roles" {
   default     = []
 }
 
+variable "iap_enabled" {
+  description = "Whether to enable Identity-Aware Proxy for the Cloud Run service"
+  type        = bool
+  default     = false
+}
+
 variable "allow_unauthenticated" {
   description = "Whether to allow unauthenticated (public) invocations"
   type        = bool
