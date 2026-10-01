@@ -8,7 +8,7 @@ Terraform modules of serverless web applications on Google Cloud.
 
 | Module | Description |
 | --- | --- |
-| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, and IAM invoker bindings |
+| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, optional IAP, and IAM invoker bindings |
 
 ## Installation
 
@@ -91,6 +91,11 @@ Terraform modules of serverless web applications on Google Cloud.
     invoker_members       = ["serviceAccount:caller@my-gcp-project-id.iam.gserviceaccount.com"]
     allow_unauthenticated = false
 
+    # Optional: protect the service with Cloud Run native IAP.
+    # The IAP API and the IAP service agent's roles/run.invoker grant are
+    # managed by this module. IAP users and groups are intentionally not.
+    iap_enabled = true
+
     # Optional: set to false to allow the service to be destroyed
     deletion_protection = true
     ```
@@ -100,6 +105,24 @@ Terraform modules of serverless web applications on Google Cloud.
     `secretmanager.googleapis.com` to `enabled_apis` and grant
     `roles/secretmanager.secretAccessor` to the service account through
     `service_account_project_roles`.
+
+    When `iap_enabled = true`, the module automatically enables
+    `iap.googleapis.com` and grants `roles/run.invoker` to the Google-managed
+    IAP service agent. It does not manage `roles/iap.httpsResourceAccessor`
+    memberships, so IAP users and groups can be changed independently of
+    Terraform. For example:
+
+    ```sh
+    $ SERVICE_NAME='myapp-dev-cloud-run'
+    $ USER_EMAIL='user@example.com'
+    $ gcloud iap web add-iam-policy-binding \
+        --member="user:${USER_EMAIL}" \
+        --role='roles/iap.httpsResourceAccessor' \
+        --region="${LOCATION}" \
+        --resource-type='cloud-run' \
+        --service="${SERVICE_NAME}" \
+        --project="${PROJECT_ID}"
+    ```
 
 7.  Create a preview.
 
@@ -141,6 +164,7 @@ module "cloudrun" {
   project_id  = "my-gcp-project-id"
   region      = "us-central1"
   image       = "us-docker.pkg.dev/my-gcp-project-id/my-repo/app:latest"
+  iap_enabled = true
 }
 ```
 
