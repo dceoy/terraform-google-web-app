@@ -252,7 +252,7 @@ resource "google_cloudbuild_trigger" "image_push" {
 
   build {
     step {
-      name       = "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+      name       = "gcr.io/google.com/cloudsdktool/google-cloud-cli:stable"
       entrypoint = "gcloud"
       args = [
         "run",
