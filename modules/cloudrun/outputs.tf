@@ -37,28 +37,3 @@ output "service_account_email" {
   description = "Email of the service account that the Cloud Run service runs as"
   value       = local.service_account_email
 }
-
-
-output "deploy_image_uri" {
-  description = "Artifact Registry tag URI monitored for automatic Cloud Run deployment"
-  value       = var.deploy_on_image_push ? local.deploy_image_uri : null
-}
-
-output "image_push_trigger_id" {
-  description = "Cloud Build trigger ID for Artifact Registry image push deployment"
-  value       = var.deploy_on_image_push ? google_cloudbuild_trigger.image_push[0].trigger_id : null
-}
-
-output "image_deployer_service_account_email" {
-  description = "Service account used by Cloud Build for image push deployment"
-  value       = var.deploy_on_image_push ? google_service_account.image_deployer[0].email : null
-}
-
-output "artifact_registry_notification_topic" {
-  description = "Pub/Sub topic used for Artifact Registry notifications"
-  value = var.deploy_on_image_push ? (
-    var.artifact_registry_notification_topic != null
-    ? var.artifact_registry_notification_topic
-    : google_pubsub_topic.artifact_registry[0].id
-  ) : null
-}
