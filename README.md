@@ -8,7 +8,7 @@ Terraform modules of serverless web applications on Google Cloud.
 
 | Module | Description |
 | --- | --- |
-| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, and IAM invoker bindings |
+| [`modules/cloudrun`](modules/cloudrun) | Cloud Run (v2) service with a dedicated service account, API enablement, optional Artifact Registry, optional IAP, and IAM invoker bindings |
 
 ## Installation
 
@@ -70,6 +70,14 @@ Terraform modules of serverless web applications on Google Cloud.
         --role='roles/resourcemanager.projectIamAdmin'
     ```
 
+    If the module should create an Artifact Registry repository, also grant:
+
+    ```sh
+    $ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+        --member="serviceAccount:${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --role='roles/artifactregistry.admin'
+    ```
+
 6.  Create `envs/dev/terraform.tfvars` and set the variables as follows:
 
     ```hcl
@@ -77,7 +85,14 @@ Terraform modules of serverless web applications on Google Cloud.
     env_type    = "dev"
     project_id  = "my-gcp-project-id"
     region      = "us-central1"
-    image       = "us-docker.pkg.dev/my-gcp-project-id/my-repo/app:latest"
+
+    # Optional: create a Docker repository for application images.
+    create_artifact_registry_repository = true
+    artifact_registry_repository_id     = "myapp"
+
+    # Keep the default public hello image for the first apply if the application
+    # image has not been pushed yet. Set this after pushing an image.
+    # image = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:<tag>"
 
     # Optional: plain and Secret Manager environment variables
     env_vars = {
@@ -91,6 +106,11 @@ Terraform modules of serverless web applications on Google Cloud.
     invoker_members       = ["serviceAccount:caller@my-gcp-project-id.iam.gserviceaccount.com"]
     allow_unauthenticated = false
 
+    # Optional: protect the service with Cloud Run native IAP.
+    # The IAP API, service identity, and roles/run.invoker grant are managed by
+    # this module. IAP users and groups are intentionally not.
+    iap_enabled = true
+
     # Optional: set to false to allow the service to be destroyed
     deletion_protection = true
     ```
@@ -100,6 +120,37 @@ Terraform modules of serverless web applications on Google Cloud.
     `secretmanager.googleapis.com` to `enabled_apis` and grant
     `roles/secretmanager.secretAccessor` to the service account through
     `service_account_project_roles`.
+
+    When `create_artifact_registry_repository = true`, the module enables
+    `artifactregistry.googleapis.com` and creates a Docker repository in the
+    Cloud Run region. Docker build and push are intentionally kept outside
+    Terraform.
+
+    When `iap_enabled = true`, the module enables `iap.googleapis.com`,
+    explicitly provisions the Google-managed IAP service identity, and grants it
+    `roles/run.invoker`. It does not manage
+    `roles/iap.httpsResourceAccessor` memberships, so IAP users and groups can
+    be changed independently of Terraform.
+
+    If IAP is being enabled for the first time in a project that does not belong
+    to a Google Cloud organization, Terraform cannot create the required OAuth
+    client automatically. Enable IAP once in the Google Cloud Console or
+    configure a custom OAuth client before relying on this Terraform-managed
+    setup.
+
+    For example:
+
+    ```sh
+    $ SERVICE_NAME='myapp-dev-cloud-run'
+    $ USER_EMAIL='user@example.com'
+    $ gcloud iap web add-iam-policy-binding \
+        --member="user:${USER_EMAIL}" \
+        --role='roles/iap.httpsResourceAccessor' \
+        --region="${LOCATION}" \
+        --resource-type='cloud-run' \
+        --service="${SERVICE_NAME}" \
+        --project="${PROJECT_ID}"
+    ```
 
 7.  Create a preview.
 
@@ -130,6 +181,29 @@ Terraform modules of serverless web applications on Google Cloud.
         "projects/${PROJECT_ID}/locations/${LOCATION}/deployments/${DEPLOYMENT_ID}"
     ```
 
+9.  To deploy a locally built Docker image, tag and push it to Artifact Registry,
+    set `image` to the pushed image URI, and apply the deployment again.
+
+    ```sh
+    $ REPOSITORY_ID='myapp'
+    $ IMAGE_NAME='app'
+    $ IMAGE_TAG="$(git rev-parse --short HEAD)"
+    $ IMAGE_URL="${LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
+    $ gcloud auth configure-docker "${LOCATION}-docker.pkg.dev"
+    $ docker build --tag "${IMAGE_URL}" .
+    $ docker push "${IMAGE_URL}"
+    ```
+
+    Then set:
+
+    ```hcl
+    image = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:<tag>"
+    ```
+
+    Prefer an immutable tag such as a Git commit SHA, or an image digest, instead
+    of reusing `latest`. Changing the `image` value gives Terraform an explicit
+    revision change to deploy.
+
 ## Usage as a Terraform module
 
 ```hcl
@@ -140,9 +214,18 @@ module "cloudrun" {
   env_type    = "dev"
   project_id  = "my-gcp-project-id"
   region      = "us-central1"
-  image       = "us-docker.pkg.dev/my-gcp-project-id/my-repo/app:latest"
+
+  create_artifact_registry_repository = true
+  artifact_registry_repository_id     = "myapp"
+
+  image       = "us-central1-docker.pkg.dev/my-gcp-project-id/myapp/app:abc1234"
+  iap_enabled = true
 }
 ```
+
+The module outputs `artifact_registry_repository_url` when it creates the
+repository. This value can be used by external build/deployment automation such
+as GitHub Actions.
 
 ## Cleanup
 

@@ -3,6 +3,16 @@ output "project_service_ids" {
   value       = [for svc in google_project_service.apis : svc.service]
 }
 
+output "artifact_registry_repository_name" {
+  description = "Full resource name of the created Artifact Registry repository"
+  value       = var.create_artifact_registry_repository ? google_artifact_registry_repository.main[0].name : null
+}
+
+output "artifact_registry_repository_url" {
+  description = "Docker repository URL of the created Artifact Registry repository"
+  value       = var.create_artifact_registry_repository ? "${local.region}-docker.pkg.dev/${local.project_id}/${local.artifact_registry_repository_id}" : null
+}
+
 output "cloud_run_service_name" {
   description = "Name of the Cloud Run service"
   value       = google_cloud_run_v2_service.main.name
